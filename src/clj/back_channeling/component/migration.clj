@@ -40,7 +40,12 @@
             [email :string :unique-value]
             [password :string]
             [salt :bytes]
-            [token :string]))
+            [token :string]
+            [roles :ref :many]))
+   (schema role
+           (fields
+            [board :ref]
+            [type :enum [:owner :admin :member]]))
    (schema article
            (fields
             [name :string :unique-value]
