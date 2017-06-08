@@ -5,7 +5,13 @@
             [datomic-schema.schema :as s]))
 
 (defn dbschema []
-  [(schema board
+  [(schema group
+           (fields
+            [name :string :indexed :unique-value :fulltext]
+            [description :string]
+            [hidden :boolean]
+            [boards :ref :many]))
+   (schema board
            (fields
             [name :string :indexed :unique-value :fulltext]
             [description :string]
@@ -72,6 +78,11 @@
                    [{:db/id #db/id[:db.part/user]
                      :board/name "default"
                      :board/description "Default board"}
+                    {:dib/id #db/id[:db.part/user -13]
+                     :group/name "default_group"
+                     :group/description "Default group"
+                     :group/hidden false
+                     :group/boards #db/id[:db.part/user]}
                     {:db/id #db/id[:db.part/user -1]
                      :reaction/name "GM"
                      :reaction/label "( ノﾟДﾟ)"}
