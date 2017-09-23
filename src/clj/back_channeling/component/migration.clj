@@ -42,8 +42,7 @@
             [email :string :unique-value]
             [password :string]
             [salt :bytes]
-            [token :string]
-            [tags :ref :many]))
+            [token :string]))
    (schema article
            (fields
             [name :string :unique-value]
@@ -65,8 +64,6 @@
    (schema tag
            (fields
             [name :string :fulltext]
-            [owners :ref :many]
-            [private? :boolean]
             [color :enum [:white :black :grey :yellow :orange :green :red :blue :pink :purple :brown]]
             [priority :long]
             [description :string]))])

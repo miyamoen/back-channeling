@@ -510,7 +510,7 @@
                           :opts {:board-name (:board/name board)
                                   :reactions reactions}}))])]]))))
 
-(defcomponent boards-view [boards owner {:keys [private-tags]}]
+(defcomponent boards-view [boards owner]
   (init-state [_] {:board {:board/name ""
                            :board/description ""
                            :board/tags []}})
@@ -542,26 +542,16 @@
                                    (when (and (= (.-which e) 0x0d) (.-ctrlKey e))
                                      (let [btn (.. (om/get-node owner) (querySelector "button.submit.button"))]
                                        (.click btn))))}]]
-        (when-not (empty? private-tags)
-          [:div.field
-            [:label "Set Private Tag"]
-            [:select.ui.basic.floating.dropdown.button
-              {:on-change (fn [e]
-                            (om/set-state! owner [:board :board/tags] [(js/parseInt (.. e -target -value))]))}
-              [:option.item]
-              (for [tag private-tags]
-                [:option.item {:value (:db/id tag)} (:tag/name tag)])]])
-          [:div.field
-            [:button.ui.blue.labeled.submit.icon.button
-             {:on-click (fn [_]
-                          (let [board (om/get-state owner :board)
-                                [result map] (b/validate board
-                                                         :board/name v/required)]
-                            (if result
-                              (om/set-state! owner :error-map (:bouncer.core/errors map))
-                              (do (save-board board)
-                                  (om/update-state! owner [:board]
-                                                    #(assoc %
-                                                            :board/name ""
-                                                            :board/description ""))))))}
-             [:i.icon.edit] "Create board"]]]])))
+        [:div.field
+          [:button.ui.blue.labeled.submit.icon.button
+           {:on-click (fn [_]
+                        (let [board (om/get-state owner :board)
+                              [result map] (b/validate board :board/name v/required)]
+                          (if result
+                            (om/set-state! owner :error-map (:bouncer.core/errors map))
+                            (do (save-board board)
+                                (om/update-state! owner [:board]
+                                                  #(assoc %
+                                                          :board/name ""
+                                                          :board/description ""))))))}
+           [:i.icon.edit] "Create board"]]]])))

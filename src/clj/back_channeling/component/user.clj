@@ -3,13 +3,12 @@
             [liberator.core :as liberator]
             [bouncer.validators :as v]
             [com.stuartsierra.component :as component]
-            (back-channeling [util :refer [parse-request]])
             (back-channeling.component [datomic :as d]
                                        [socketapp :refer [find-users]])))
 
 (defn find-user-by-name [datomic user-name]
   (d/query datomic
-           '{:find [(pull ?u [:db/id :user/name :user/email :user/tags]) .]
+           '{:find [(pull ?u [:db/id :user/name :user/email]) .]
              :in [$ ?u-name]
              :where [[?u :user/name ?u-name]]}
            user-name))

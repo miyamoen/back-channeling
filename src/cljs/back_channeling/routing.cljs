@@ -10,12 +10,6 @@
   (:use [cljs.reader :only [read-string]])
   (:import [goog.History]))
 
-(defn fetch-private-tags [app]
-  (let [user-name (.. js/document (querySelector "meta[property='bc:user:name']") (getAttribute "content"))]
-    (api/request (str "/api/user/" user-name "/tags")
-                 {:handler (fn [response]
-                             (om/transact! app #(assoc % :private-tags response)))})))
-
 (defn fetch-boards [app]
   (api/request "/api/boards"
                {:handler (fn [response]
@@ -84,8 +78,7 @@
 (defn- setup-routing [app]
   (sec/set-config! :prefix "#")
   (sec/defroute "/" []
-    (fetch-boards app)
-    (fetch-private-tags app))
+    (fetch-boards app))
   (sec/defroute "/board/:board-name" [board-name]
     (fetch-board board-name app))
   (sec/defroute "/board/:board-name/:thread-id" [board-name thread-id]
