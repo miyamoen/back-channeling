@@ -26,6 +26,16 @@
             (back-channeling.endpoint [chat-app :refer [chat-app-endpoint]]
                                       [api      :refer [api-endpoint]])))
 
+(defrecord Route []
+  component/Lifecycle
+  (start [component]
+    component)
+  (stop [component]
+    component))
+
+(defn route-component [& options]
+  (map->Route options))
+
 (defn wrap-same-origin-policy [handler console]
   (fn [req]
     (if (:uri console)
@@ -47,8 +57,11 @@
     (or (.contains accept "application/json")
         (.contains accept "application/edn"))))
 
-(def access-rules [{:pattern #"^(/|/api/(?!token).*)$"
-                    :handler authenticated?}])
+(defn access-rules [prefix]
+  [{:pattern (if prefix
+               (re-pattern (str "^(" prefix "/?|" prefix "/api/(?!token).*)$"))
+               #"^(/|/api/(?!token).*)$")
+    :handler authenticated?}])
 
 (defn token-base [token-provider]
   (token-backend
@@ -64,14 +77,14 @@
 (defn wrap-authn [handler token-provider & backends]
   (apply wrap-authentication handler (conj backends (token-base token-provider))))
 
-(def base-config
+(defn base-config [{:keys [prefix]}]
   {:app {:middleware [[wrap-not-found      :not-found]
                       [wrap-access-rules   :access-rules]
                       [wrap-authorization  :authorization]
                       [wrap-authn          :token :session-base]
                       [wrap-same-origin-policy :console]
                       [wrap-defaults       :defaults]]
-         :access-rules {:rules access-rules :policy :allow}
+         :access-rules {:rules (access-rules prefix) :policy :allow}
          :not-found    "Resource Not Found"
          :defaults     (meta-merge site-defaults
                                    {:security {:anti-forgery false}
@@ -83,13 +96,14 @@
                               (http/response "Permission denied" 403)
                               (http/response "Unauthorized" 401))
                             (if (authenticated? req)
-                              (redirect "/login")
-                              (redirect (format "/login?next=%s" (:uri req))))))
+                              (redirect (str prefix "/login"))
+                              (redirect (-> (str prefix "/login?next=%s")
+                                            (format (:uri req)))))))
          :aliases      {"/" "/index.html"}}
    :datomic {:uri "datomic:mem://bc"}})
 
-(defn new-system [config]
-  (let [config (meta-merge base-config config)]
+(defn new-system [{:keys [route] :as config}]
+  (let [config (meta-merge (base-config route) config)]
     (-> (component/system-map
          :app       (handler-component   (:app config))
          :socketapp (socketapp-component (:socketapp config))
@@ -99,6 +113,7 @@
          :migration (migration-model)
          :chat      (endpoint-component chat-app-endpoint)
          :api       (endpoint-component api-endpoint)
+         :route     (route-component     (:route config))
          :tag       (tag-component       (:tag config))
          :user      (user-component      (:user config)))
         (component/system-using
@@ -106,7 +121,7 @@
           :app       [:chat :api :token]
           :socketapp [:token]
           :migration [:datomic]
-          :chat      [:datomic]
-          :api       [:datomic :token :socketapp :tag :user]
+          :chat      [:datomic :route]
+          :api       [:datomic :token :socketapp :tag :user :route]
           :tag       [:datomic]
           :user      [:datomic :socketapp]}))))

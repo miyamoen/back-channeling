@@ -10,6 +10,9 @@
   (:use [cljs.reader :only [read-string]])
   (:import [goog.events KeyCodes]))
 
+(def route-prefix
+  (.. js/document (querySelector "meta[property='bc:route:prefix']") (getAttribute "content")))
+
 (defn handle-each-type [handler response xhrio]
   (if (fn? handler)
     (handler response)
@@ -50,7 +53,7 @@
                               goog.net.ErrorCode/ABORT          (handle-each-type (:abort error-handler) res xhrio)
                               goog.net.ErrorCode/TIMEOUT        (handle-each-type (:timeout error-handler) res xhrio)
                               goog.net.ErrorCode/OFFLINE        (handle-each-type (:offline error-handler) res xhrio)))))))
-     (.send xhrio path (.toLowerCase (name method))
+     (.send xhrio (str route-prefix path) (.toLowerCase (name method))
             body
             (case format
               :xml (clj->js {:content-type "application/xml"})

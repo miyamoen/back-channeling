@@ -575,8 +575,8 @@
                            :in [$]
                            :where [[?r :reaction/name]]}))))
 
-(defn api-endpoint [{:keys [datomic token socketapp tag user] :as config}]
-  (context "/api" []
+(defn api-endpoint [{:keys [datomic token socketapp tag user route] :as config}]
+  (context (str (:prefix route) "/api") []
    (ANY "/token" []  (token-resource config))
    (ANY "/boards" [] (boards-resource config))
    (ANY "/board/:board-name" [board-name]

@@ -6,9 +6,9 @@
             [environ.core :refer [env]]
             [hiccup.page :refer [include-js]]
             [hiccup.middleware :refer [wrap-base-url]]
-            [compojure.core :refer [GET POST routes] :as compojure]
+            [compojure.core :refer [GET POST context] :as compojure]
             [compojure.route :as route]
-            
+
             (back-channeling [layout :refer [layout]]
                              [signup :as signup]
                              [style :as style])
@@ -30,20 +30,22 @@
                        [?s :user/password ?hash-hex]]}
              username password)))
 
-(defn index-view [req]
-  (layout req
+(defn index-view [req prefix]
+  (layout req prefix
    [:div#app.ui.page.full.height]
-   (include-js (str "/js/back-channeling"
+   (include-js (str prefix
+                    "/js/back-channeling"
                     (when-not (:dev env) ".min") ".js"))))
 
-(defn login-view [req]
+(defn login-view [req prefix]
   (layout
    req
+   prefix
    [:div.ui.middle.aligned.center.aligned.login.grid
     [:div.column
      [:h2.ui.header
       [:div.content
-       [:img.ui.image {:src "/img/logo.png"}]]]
+       [:img.ui.image {:src (str prefix "/img/logo.png")}]]]
      [:form.ui.large.login.form
       (merge {:method "post"}
              (when (= (:request-method req) :post)
@@ -61,33 +63,48 @@
          [:input {:type "password" :name "password" :placeholder "Password"}]]]
        [:button.ui.fluid.large.teal.submit.button {:type "submit"} "Login"]]]
      [:div.ui.message
-      "New to us? " [:a {:href "/signup"} "Sign up"]]]]))
+      "New to us? " [:a {:href (str prefix "/signup")} "Sign up"]]]]))
 
-(defn chat-app-endpoint [{:keys [datomic]}]
-  (routes
-   (GET "/" req (index-view req))
-   (GET "/login" req (login-view req))
+(defn chat-app-endpoint [{:keys [datomic] {:keys [prefix]} :route}]
+  (context prefix []
+   (GET "/" req (index-view req prefix))
+   (GET "/login" req (login-view req prefix))
    (POST "/login" {{:keys [username password]} :params :as req}
      (if-let [user (auth-by-password datomic username password)]
-       (-> (redirect (get-in req [:query-params "next"] "/"))
+       (-> (redirect (get-in req [:query-params "next"] (or prefix "/")))
            (assoc-in [:session :identity] (select-keys user [:user/name :user/email])))
-       (login-view req)))
+       (login-view req prefix)))
    (GET "/signup" req
-     (signup/signup-view req))
+     (signup/signup-view req prefix))
    (POST "/signup" req
      (signup/signup datomic
+                    prefix
                     (select-keys (clojure.walk/keywordize-keys (:params req))
                                  [:user/email :user/name :user/password :user/token])))
-   
    (GET "/logout" []
-     (-> (redirect "/")
+     (-> (redirect (str prefix "/login"))
          (assoc :session {})))
-   
-   (GET "/react/react.js" [] (-> (resource-response "cljsjs/development/react.inc.js")
-                                 (content-type "text/javascript")))
-   (GET "/react/react.min.js" [] (resource-response "cljsjs/production/react.min.inc.js"))
+
+   (GET "/favicon.ico" []
+     (resource-response "favicon.ico" {:root "public"}))
+   (GET "/img/logo.png" []
+     (-> (resource-response "img/logo.png" {:root "public"})
+         (content-type "image/png")))
+   (GET "/js/vendors/markdown-it-emoji.min.js" []
+     (-> (resource-response "js/vendors/markdown-it-emoji.min.js" {:root "public"})
+         (content-type "text/javascript;charset=utf-8")))
+   (GET "/js/signup.js" []
+     (-> (resource-response "js/signup.js" {:root "public"})
+         (content-type "text/javascript;charset=utf-8")))
+   (GET "/js/back-channeling.min.js" []
+     (-> (resource-response "js/back-channeling.min.js" {:root "public"})
+         (content-type "text/javascript;charset=utf-8")))
+   (GET "/js/back-channeling.js" []
+     (-> (resource-response "js/back-channeling.js" {:root "public"})
+         (content-type "text/javascript;charset=utf-8")))
    (GET "/css/back-channeling.css" [] (-> {:body (style/build)}
                                           (content-type "text/css")))
+
    (GET ["/voice/:thread-id/:filename" :thread-id #"\d+" :filename #"[0-9a-f\-]+\.ogg"] [thread-id filename]
      (let [content-type (cond (.endsWith filename ".wav") "audio/wav"
                               (.endsWith filename ".ogg") "audio/ogg"

@@ -115,7 +115,7 @@
                     (connect-socket app (:access-token response)))
                   :error-handler
                   (fn [response error-code]
-                    (set! (.. js/document -location -href) "/"))})
+                    (set! (.. js/document -location -href) (or api/route-prefix "/")))})
 
     (when-let [on-click-outside (om/get-state owner :click-outside-fn)]
       (.removeEventListener js/document "mousedown" on-click-outside)))
@@ -139,7 +139,7 @@
       [:div.ui.fixed.site.menu
        [:div.item
         [:a {:href "#/"}
-         [:img.ui.logo.image {:src "/img/logo.png" :alt "Back Channeling"}]]]
+         [:img.ui.logo.image {:src (str api/route-prefix "/img/logo.png") :alt "Back Channeling"}]]]
        [:div.center.menu
         (when (= (:page app) :board)
           [:a.item {:href "#/"}
@@ -187,7 +187,7 @@
           (om/build avatar user)
           [:span (:user/name user)] ]
          [:div.menu.transition {:class (if open-profile? "visible" "hidden")}
-          [:a.item {:href "/logout"} "Logout"]]]]]
+          [:a.item {:href (str api/route-prefix "/logout")} "Logout"]]]]]
       (when-let [board (get-in app [:boards (:target-board-name app)])]
         (case (:page app)
           :boards (om/build boards-view (:boards app) {:opts {:private-tags (:private-tags app)}})
