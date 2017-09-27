@@ -215,20 +215,22 @@
                        (sort-by :score/value >)
                        vec)))))
 
-(defn thread-resource [{:keys [datomic]} thread-id]
+(defn thread-resource [{:keys [datomic]} board-name thread-id]
   (liberator/resource
    :available-media-types ["application/edn" "application/json"]
    :allowed-methods [:get :put]
    :malformed? #(parse-request %)
 
    :allowed? (fn [ctx]
-               (let [board-name (d/query datomic
-                                         '{:find [?b-name .]
-                                           :in [$ ?th]
-                                           :where [[?b :board/threads ?th]
-                                                   [?b :board/name ?b-name]]}
-                                         thread-id)]
-                 (board-authorized? datomic (get-in ctx [:request :identity :user/name]) board-name)))
+               (board-authorized? datomic (get-in ctx [:request :identity :user/name]) board-name))
+
+   :exists? (fn [ctx]
+              (d/query datomic
+                       '{:find [?th .]
+                         :in [$ ?b-name ?th]
+                         :where [[?b :board/name ?b-name]
+                                 [?b :board/threads ?th]]}
+                       board-name thread-id))
 
    :put! (fn [{{:keys [add-watcher remove-watcher]} :edn req :request}]
            (when-let [user (d/query datomic
@@ -255,7 +257,7 @@
                     (update-in [:thread/comments]
                                (partial map-indexed #(assoc %2  :comment/no (inc %1))))))))
 
-(defn comments-resource [{:keys [datomic socketapp]} thread-id from to]
+(defn comments-resource [{:keys [datomic socketapp]} board-name thread-id from to]
   (liberator/resource
    :available-media-types ["application/edn" "application/json"]
    :allowed-methods [:get :post]
@@ -267,14 +269,18 @@
                                                                "comment.format/plain"
                                                                "comment.format/markdown"
                                                                "comment.format/voice"]]]})
+
    :allowed? (fn [ctx]
-               (let [board-name (d/query datomic
-                                         '{:find [?b-name .]
-                                           :in [$ ?th]
-                                           :where [[?b :board/threads ?th]
-                                                   [?b :board/name ?b-name]]}
-                                         thread-id)]
-                 (board-authorized? datomic (get-in ctx [:request :identity :user/name]) board-name)))
+               (board-authorized? datomic (get-in ctx [:request :identity :user/name]) board-name))
+
+   :exists? (fn [ctx]
+              (d/query datomic
+                       '{:find [?th .]
+                         :in [$ ?b-name ?th]
+                         :where [[?b :board/name ?b-name]
+                                 [?b :board/threads ?th]]}
+                       board-name thread-id))
+
    :processable? (fn [ctx]
                    (if (#{:put :post} (get-in ctx [:request :request-method]))
                      (if-let [resnum (d/query datomic
@@ -354,7 +360,7 @@
 
 (defn comment-resource
   "Returns a resource that react to a comment"
-  [{:keys [datomic socketapp]} thread-id comment-no]
+  [{:keys [datomic socketapp]} board-name thread-id comment-no]
   {:pre [(integer? thread-id) (integer? comment-no)]}
   (liberator/resource
    :available-media-types ["application/edn" "application-json"]
@@ -364,26 +370,24 @@
                     {::identity identity}
                     false))
    :malformed? #(parse-request % {:reaction/name [[v/required]]})
+
    :allowed? (fn [{identity ::identity}]
-               (let [board-name (d/query datomic
-                                         '{:find [?b-name .]
-                                           :in [$ ?th]
-                                           :where [[?b :board/threads ?th]
-                                                   [?b :board/name ?b-name]]}
-                                         thread-id)]
-                 (board-authorized? datomic (:user/name identity) board-name)))
+               (board-authorized? datomic (:user/name identity) board-name))
+
+   :exists? (fn [ctx]
+              (d/query datomic
+                       '{:find [?th .]
+                         :in [$ ?b-name ?th]
+                         :where [[?b :board/name ?b-name]
+                                 [?b :board/threads ?th]]}
+                       board-name thread-id))
+
    :post! (fn [{comment-reaction :edn identity ::identity}]
             (let [user (d/query datomic
                                 '{:find [?u .]
                                   :in [$ ?name]
                                   :where [[?u :user/name ?name]]}
                                 (:user/name identity))
-                  board-name (d/query datomic
-                                      '{:find [?bname .]
-                                        :in [$ ?t]
-                                        :where [[?b :board/name ?bname]
-                                                [?b :board/threads ?t]]}
-                                      thread-id)
                   reaction (d/query datomic
                                     '{:find [?r .]
                                       :in [$ ?r-name]
@@ -416,7 +420,7 @@
                                 :comments/to   comment-no
                                 :board/name board-name}])))))
 
-(defn voices-resource [{:keys [datomic]} thread-id]
+(defn voices-resource [{:keys [datomic]} board-name thread-id]
   (liberator/resource
    :available-media-types ["application/edn" "application-json"]
    :allowed-methods [:post]
@@ -427,14 +431,18 @@
                      "audio/ogg"  [false {::media-type :audio/ogg}]
                      "audio/wav"  [false {::media-type :audio/wav}]
                      true)))
+
    :allowed? (fn [ctx]
-               (let [board-name (d/query datomic
-                                         '{:find [?b-name .]
-                                           :in [$ ?th]
-                                           :where [[?b :board/threads ?th]
-                                                   [?b :board/name ?b-name]]}
-                                         thread-id)]
-                 (board-authorized? datomic (get-in ctx [:request :identity :user/name]) board-name)))
+               (board-authorized? datomic (get-in ctx [:request :identity :user/name]) board-name))
+
+   :exists? (fn [ctx]
+              (d/query datomic
+                       '{:find [?th .]
+                         :in [$ ?b-name ?th]
+                         :where [[?b :board/name ?b-name]
+                                 [?b :board/threads ?th]]}
+                       board-name thread-id))
+
    :post! (fn [ctx]
             (let [body-stream (get-in ctx [:request :body])
                   filename (str (.toString (UUID/randomUUID))
@@ -581,22 +589,23 @@
      (board-resource config board-name))
    (ANY "/board/:board-name/threads" [board-name]
      (threads-resource config board-name))
-   (ANY "/thread/:thread-id" [thread-id]
-     (thread-resource config (Long/parseLong thread-id)))
-   (ANY "/thread/:thread-id/comments" [thread-id]
-     (comments-resource config (Long/parseLong thread-id) 1 nil))
-   (ANY ["/thread/:thread-id/comments/:comment-range" :comment-range #"\d+\-(\d+)?"]
-       [thread-id comment-range]
+   (ANY "/board/:board-name/thread/:thread-id" [board-name thread-id]
+     (thread-resource config board-name (Long/parseLong thread-id)))
+   (ANY "/board/:board-name/thread/:thread-id/comments" [board-name thread-id]
+     (comments-resource board-name config (Long/parseLong thread-id) 1 nil))
+   (ANY ["/board/:board-name/thread/:thread-id/comments/:comment-range" :comment-range #"\d+\-(\d+)?"]
+       [board-name thread-id comment-range]
      (let [[_ from to] (re-matches #"(\d+)\-(\d+)?" comment-range)]
        (comments-resource config
+                          board-name
                           (Long/parseLong thread-id)
                           (when from (Long/parseLong from))
                           (when to (Long/parseLong to)))))
-   (ANY "/thread/:thread-id/voices" [thread-id]
-     (voices-resource config (Long/parseLong thread-id)))
-   (ANY "/thread/:thread-id/comment/:comment-no"
-       [thread-id :<< as-int comment-no :<< as-int]
-     (comment-resource config thread-id comment-no))
+   (ANY "/board/:board-name/thread/:thread-id/voices" [board-name thread-id]
+     (voices-resource config board-name (Long/parseLong thread-id)))
+   (ANY "/board/:board-name/thread/:thread-id/comment/:comment-no"
+       [board-name thread-id :<< as-int comment-no :<< as-int]
+     (comment-resource config board-name thread-id comment-no))
    (ANY "/articles" []
      (articles-resource config))
    (ANY "/article/:article-id" [article-id]
