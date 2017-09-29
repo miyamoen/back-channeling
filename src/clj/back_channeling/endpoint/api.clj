@@ -47,10 +47,12 @@
    :malformed? #(parse-request % {:board/name [[v/required]
                                                [v/max-count 255]]})
 
-   :authorized? (fn [ctx]
-                  (if-let [identity (get-in ctx [:request :identity])]
-                    {::identity identity}
-                    false))
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :get (or (:list-any-boards permissions) (:list-boards permissions))
+                   :post (:create-board permissions)
+                   false)))
 
    :exists? (fn [ctx]
               (if-let [boards (d/query datomic
@@ -74,6 +76,12 @@
    :available-media-types ["application/edn" "application/json"]
    :allowed-methods [:get :put]
    :malformed? #(parse-request %)
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :get (or (:list-any-boards permissions) (:list-boards permissions))
+                   :put (or (:modify-any-boards permissions) (:modify-boards permissions))
+                   false)))
 
    :exists? (fn [ctx]
               (if-let [board (d/query datomic
@@ -144,10 +152,17 @@
                     {::identity identity}
                     false))
 
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :get (or (:list-any-threads permissions) (:list-threads permissions))
+                   :post (:create-thread permissions)
+                   false)))
+
    :handle-created (fn [ctx]
                      {:db/id (:db/id ctx)})
 
-   :post! (fn [{th :edn req :request identity ::identity}]
+   :post! (fn [{th :edn identity ::identity}]
             (let [user (d/query datomic
                                 '{:find [?u .]
                                   :in [$ ?name]
@@ -188,6 +203,13 @@
    :available-media-types ["application/edn" "application/json"]
    :allowed-methods [:get :put]
    :malformed? #(parse-request %)
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :get (or (:list-any-threads permissions) (:list-threads permissions))
+                   :put (or (:modify-any-threads permissions) (:modify-threads permissions))
+                   false)))
+
    :put! (fn [{{:keys [add-watcher remove-watcher]} :edn req :request}]
            (when-let [user (d/query datomic
                                     '{:find [?u .]
@@ -225,6 +247,14 @@
                                                                "comment.format/plain"
                                                                "comment.format/markdown"
                                                                "comment.format/voice"]]]})
+
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :get (or (:list-any-threads permissions) (:list-threads permissions))
+                   :post (:create-comment permissions)
+                   false)))
+
    :processable? (fn [ctx]
                    (if (#{:put :post} (get-in ctx [:request :request-method]))
                      (if-let [resnum (d/query datomic
@@ -309,11 +339,18 @@
   (liberator/resource
    :available-media-types ["application/edn" "application-json"]
    :allowed-methods [:post]
+   :malformed? #(parse-request % {:reaction/name [[v/required]]})
    :authorized? (fn [ctx]
                   (if-let [identity (get-in ctx [:request :identity])]
                     {::identity identity}
                     false))
-   :malformed? #(parse-request % {:reaction/name [[v/required]]})
+
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :post (:create-comment permissions)
+                   false)))
+
    :post! (fn [{comment-reaction :edn identity ::identity}]
             (let [user (d/query datomic
                                 '{:find [?u .]
@@ -369,6 +406,13 @@
                      "audio/ogg"  [false {::media-type :audio/ogg}]
                      "audio/wav"  [false {::media-type :audio/wav}]
                      true)))
+
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :post (:create-comment permissions)
+                   false)))
+
    :post! (fn [ctx]
             (let [body-stream (get-in ctx [:request :body])
                   filename (str (.toString (UUID/randomUUID))
@@ -399,6 +443,13 @@
    :available-media-types ["application/edn" "application/json"]
    :allowed-methods [:get :post]
    :malformed? #(parse-request %)
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :get (or (:list-any-threads permissions) (:list-threads permissions))
+                   :post (:create-article permissions)
+                   false)))
+
    :post-to-existing? (fn [{{article-name :article/name} :edn :as ctx}]
                         (not
                          (or
@@ -440,8 +491,15 @@
 (defn article-resource [{:keys [datomic]} article-id]
   (liberator/resource
    :available-media-types ["application/edn" "application/json"]
-   :allowed-methods [:get :put :delete]
+   :allowed-methods [:get :put]
    :malformed? #(parse-request %)
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :get (or (:list-any-threads permissions) (:list-threads permissions))
+                   :put (or (:modify-any-articles permissions) (:modify-articles permissions))
+                   false)))
+
    :put! (fn [{article :edn req :request}]
            (let [retract-transaction (->> (:article/blocks
                                            (d/pull datomic '[:article/blocks] article-id))
@@ -489,6 +547,12 @@
                        {:message "code is invalid."})
                      {:message "code is required."})))
 
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :post (:create-token permissions)
+                   false)))
+
    :post! (fn [{identity ::identity}]
             (let [access-token (token/new-token token identity)]
               {::post-response (merge identity
@@ -501,6 +565,12 @@
   (liberator/resource
    :available-media-types ["application/edn" "application/json"]
    :allowed-methods [:get]
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :get (:list-reactions permissions)
+                   false)))
+
    :handle-ok (fn [_]
                 (d/query datomic
                          '{:find [[(pull ?r [:*]) ...]]

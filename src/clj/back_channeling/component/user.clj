@@ -17,6 +17,11 @@
   (liberator/resource
    :available-media-types ["application/edn" "application/json"]
    :allowed-methods [:get]
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :get (:list-users permissions)
+                   false)))
    :handle-ok (fn [_]
                 (vec (find-users socketapp)))))
 
@@ -24,6 +29,12 @@
   (liberator/resource
    :available-media-types ["application/edn" "application/json"]
    :allowed-methods [:get]
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :get (:list-users permissions)
+                   false)))
+
    :exists? (fn [ctx]
               (when-let [user (find-user-by-name datomic user-name)]
                 {::user user}))

@@ -57,6 +57,13 @@
                                                          "tag.color/purple"
                                                          "tag.color/brown"]]]})
 
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :get (:list-tags permissions)
+                   :post (:create-tag permissions)
+                   false)))
+
    :post! (fn [{tag :edn req :request}]
             (let [[tempids tag-id] (save-tag datomic tag)]
               {:db/id (d/resolve-tempid datomic tempids tag-id)}))
@@ -74,13 +81,17 @@
    :available-media-types ["application/edn" "application/json"]
    :allowed-methods [:get :put]
    :malformed? #(parse-request %)
-   :authorized? (fn [ctx]
-                  (if-let [identity (get-in ctx [:request :identity])]
-                    {::identity identity}
-                    false))
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :get (:list-tags permissions)
+                   :put (or (:modify-any-tags permissions) (:modify-tags permissions))
+                   false)))
+
    :exists? (fn [ctx]
               (when-let [tag (d/pull datomic '[:*] tag-id)]
                 {::tag tag}))
+
    :new? (fn [_] false)
    :put! (fn [{old ::tag new :edn}]
            (d/transact datomic
@@ -88,6 +99,7 @@
                                       (when-let [description (:tag/description new)] [:db/add tag-id :tag/description description])
                                       (when-let [color (:tag/color new)]             [:db/add tag-id :tag/color color])
                                       (when-let [priority (:tag/priority new)]       [:db/add tag-id :tag/priority priority])])))
+
    :handle-ok (fn [{tag ::tag}]
                 tag)))
 
@@ -96,6 +108,12 @@
    :available-media-types ["application/edn" "application/json"]
    :allowed-methods [:post]
    :malformed? #(parse-request % {:db/id [[v/required]]})
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :post (or (:modify-any-threads permissions) (:modify-threads permissions))
+                   false)))
+
    :exists? (fn [ctx]
               (let [tag-id (get-in ctx [:edn :db/id])]
                 (when-not (d/query datomic
@@ -114,6 +132,12 @@
   (liberator/resource
    :available-media-types ["application/edn" "application/json"]
    :allowed-methods [:delete]
+   :allowed? (fn [{{:keys [request-method identity]} :request}]
+               (let [permissions (:permissions identity)]
+                 (condp = request-method
+                   :delete (or (:modify-any-threads permissions) (:modify-threads permissions))
+                   false)))
+
    :exists? (fn [_]
                (d/query datomic
                         '{:find [?t .]
