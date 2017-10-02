@@ -50,7 +50,7 @@
    :allowed? (fn [{{:keys [request-method identity]} :request}]
                (let [permissions (:permissions identity)]
                  (condp = request-method
-                   :get (or (:list-any-boards permissions) (:list-boards permissions))
+                   :get (:list-boards permissions)
                    :post (:create-board permissions)
                    false)))
 
@@ -79,8 +79,10 @@
    :allowed? (fn [{{:keys [request-method identity]} :request}]
                (let [permissions (:permissions identity)]
                  (condp = request-method
-                   :get (or (:list-any-boards permissions) (:list-boards permissions))
-                   :put (or (:modify-any-boards permissions) (:modify-boards permissions))
+                   :get (and (:list-boards permissions)
+                             (or (:list-any-threads permissions)
+                                 (:list-threads permissions)))
+                   :put (or (:modify-boards permissions))
                    false)))
 
    :exists? (fn [ctx]
@@ -99,7 +101,9 @@
               :board/description (:board/description new)}))
 
    :handle-ok (fn [ctx]
-                (let [board (::board ctx)]
+                (let [board (::board ctx)
+                      permissions (get-in ctx [:request :identity :permissions])
+                      user-name (get-in ctx [:request :identity :user/name])]
                   (->> (d/query datomic
                                 '{:find [?thread (count ?comment)]
                                   :in [$ ?board]
@@ -107,8 +111,9 @@
                                           [?thread :thread/comments ?comment]]}
                                 (:db/id board))
                        (map #(-> (d/pull datomic
-                                         '[:db/id :thread/title :thread/since :thread/last-updated
+                                         '[:db/id :thread/title :thread/since :thread/last-updated :thread/open?
                                            {:thread/watchers [:user/name]}
+                                           {:thread/posted-by [:user/name]}
                                            {:thread/tags [:tag/name :tag/priority
                                                           {:tag/color [:db/ident]}]}]
                                          (first %))
@@ -118,6 +123,10 @@
                                               (->> watchers
                                                    (map :user/name)
                                                    (apply hash-set))))))
+                       (filter #(or (:list-any-threads permissions)
+                                    (and (:list-threads permissions)
+                                         (or (:thread/open? %)
+                                             (= user-name (get-in % [:thread/posted-by :user/name]))))))
                        ((fn [threads] (assoc board :board/threads threads))))))))
 
 (defn save-thread [datomic board-name th user]
@@ -128,8 +137,10 @@
                                   :board/threads thread-id]
                                  {:db/id thread-id
                                   :thread/title (:thread/title th)
+                                  :thread/posted-by user
                                   :thread/since now
-                                  :thread/last-updated now}
+                                  :thread/last-updated now
+                                  :thread/open? (:thread/open? th true)}
                                  [:db/add thread-id :thread/comments #db/id[:db.part/user -2]]
                                  {:db/id #db/id[:db.part/user -2]
                                   :comment/posted-at now
@@ -172,31 +183,60 @@
               (broadcast-message socketapp [:update-board {:board/name board-name}])
               {:db/id (d/resolve-tempid datomic tempids thread-id)}))
 
-   :handle-ok (fn [{{{:keys [q]} :params} :request}]
-                (when q
-                  (->> (d/query datomic
-                                '{:find [?board-name ?thread ?comment ?score]
-                                  :in [$ ?board-name ?search]
-                                  :where [[?board :board/name ?board-name]
-                                          [?board :board/threads ?thread]
-                                          [?thread :thread/comments ?comment]
-                                          [(fulltext $ :comment/content ?search)
-                                           [[?comment ?content ?tx ?score]]]]}
-                                board-name q)
-                       (map (fn [[board-name thread-id comment-id score]]
-                              (let [thread (d/pull datomic
-                                                   '[:db/id :thread/title
-                                                     {:thread/watchers [:user/name]}]
-                                                   thread-id)
-                                    comment (d/pull datomic '[:comment/content] comment-id)]
-                                (merge thread comment
-                                       {:score/value score}
-                                       {:board/name board-name}))))
-                       (group-by :db/id)
-                       (map (fn [[k v]]
-                              (apply max-key :score/value v)))
-                       (sort-by :score/value >)
-                       vec)))))
+   :handle-ok (fn [{{{:keys [q]} :params identity :identity} :request}]
+                (let [permissions (:permissions identity)
+                      user-name (:user/name identity)]
+                  (when q
+                    (->> (d/query datomic
+                                  '{:find [?board-name ?thread ?comment ?score]
+                                    :in [$ ?board-name ?search]
+                                    :where [[?board :board/name ?board-name]
+                                            [?board :board/threads ?thread]
+                                            [?thread :thread/comments ?comment]
+                                            [(fulltext $ :comment/content ?search)
+                                             [[?comment ?content ?tx ?score]]]]}
+                                  board-name q)
+                         (map (fn [[board-name thread-id comment-id score]]
+                                (let [thread (d/pull datomic
+                                                     '[:db/id :thread/title :thread/open?
+                                                       {:thread/watchers [:user/name]}
+                                                       {:thread/posted-by [:user/name]}]
+                                                     thread-id)
+                                      comment (d/pull datomic '[:comment/content] comment-id)]
+                                  (merge thread comment
+                                         {:score/value score}
+                                         {:board/name board-name}))))
+                         (group-by :db/id)
+                         (filter #(or (:list-any-threads permissions)
+                                      (and (:list-threads permissions)
+                                           (or (:thread/open? %)
+                                               (= user-name (get-in % [:thread/posted-by :user/name]))))))
+                         (map (fn [[k v]]
+                                (apply max-key :score/value v)))
+                         (sort-by :score/value >)
+                         vec))))))
+
+(defn open-thread? [datomic thread-id]
+  (d/query datomic
+           '{:find [?o .]
+             :in [$ ?th]
+             :where [[?th :thread/open? ?o]]}
+           thread-id))
+
+(defn thread-created-by? [datomic thread-id user-name]
+  (d/query datomic
+           '{:find [?th .]
+             :in [$ ?th ?u-name]
+             :where [[?th :thread/posted-by ?u]
+                     [?u :user/name ?u-name]]}
+           thread-id user-name))
+
+(defn read-thread? [datomic permissions thread-id user-name]
+  (and (:list-comments permissions)
+       (or (:list-any-threads permissions)
+           (and (:list-threads permissions)
+                (or (open-thread? datomic thread-id)
+                    (thread-created-by? datomic thread-id user-name))))))
 
 (defn thread-resource [{:keys [datomic]} thread-id]
   (liberator/resource
@@ -204,10 +244,11 @@
    :allowed-methods [:get :put]
    :malformed? #(parse-request %)
    :allowed? (fn [{{:keys [request-method identity]} :request}]
-               (let [permissions (:permissions identity)]
+               (let [permissions (:permissions identity)
+                     user-name (:user/name identity)]
                  (condp = request-method
-                   :get (or (:list-any-threads permissions) (:list-threads permissions))
-                   :put (or (:modify-any-threads permissions) (:modify-threads permissions))
+                   :get (read-thread? datomic permissions thread-id user-name)
+                   :put (read-thread? datomic permissions thread-id user-name)
                    false)))
 
    :put! (fn [{{:keys [add-watcher remove-watcher]} :edn req :request}]
@@ -249,10 +290,12 @@
                                                                "comment.format/voice"]]]})
 
    :allowed? (fn [{{:keys [request-method identity]} :request}]
-               (let [permissions (:permissions identity)]
+               (let [permissions (:permissions identity)
+                     user-name (:user/name identity)]
                  (condp = request-method
-                   :get (or (:list-any-threads permissions) (:list-threads permissions))
-                   :post (:create-comment permissions)
+                   :get (read-thread? datomic permissions thread-id user-name)
+                   :post (and (:create-comment permissions)
+                              (read-thread? datomic permissions thread-id user-name))
                    false)))
 
    :processable? (fn [ctx]
@@ -348,7 +391,8 @@
    :allowed? (fn [{{:keys [request-method identity]} :request}]
                (let [permissions (:permissions identity)]
                  (condp = request-method
-                   :post (:create-comment permissions)
+                   :post (and (:create-comment permissions)
+                              (read-thread? datomic permissions thread-id (:user/name identity)))
                    false)))
 
    :post! (fn [{comment-reaction :edn identity ::identity}]
@@ -410,7 +454,8 @@
    :allowed? (fn [{{:keys [request-method identity]} :request}]
                (let [permissions (:permissions identity)]
                  (condp = request-method
-                   :post (:create-comment permissions)
+                   :post (and (:create-comment permissions)
+                              (read-thread? datomic permissions thread-id (:user/name identity)))
                    false)))
 
    :post! (fn [ctx]
@@ -443,11 +488,14 @@
    :available-media-types ["application/edn" "application/json"]
    :allowed-methods [:get :post]
    :malformed? #(parse-request %)
-   :allowed? (fn [{{:keys [request-method identity]} :request}]
+   :allowed? (fn [{{:keys [request-method identity]} :request article :edn}]
                (let [permissions (:permissions identity)]
                  (condp = request-method
-                   :get (or (:list-any-threads permissions) (:list-threads permissions))
-                   :post (:create-article permissions)
+                   :get (and (:list-articles permissions)
+                             (or (:list-any-threads permissions)
+                                 (:list-threads permissions)))
+                   :post (and (:create-article permissions)
+                              (read-thread? datomic permissions (:article/thread article) (:user/name identity)))
                    false)))
 
    :post-to-existing? (fn [{{article-name :article/name} :edn :as ctx}]
@@ -483,10 +531,43 @@
 
    :handle-created (fn [ctx]
                      {:db/id (:db/id ctx)})
-   :handle-ok (fn [_]
-                (d/query datomic
-                         '{:find [[(pull ?a [:*]) ...]]
-                           :where [[?a :article/name]]}))))
+   :handle-ok (fn [{{:keys [identity]} :request}]
+                (let [permissions (:permissions identity)
+                      user-name (:user/name identity)]
+                  (if (:list-any-threads permissions)
+                    (d/query datomic
+                             '{:find [[(pull ?a [:*]) ...]]
+                               :where [[?a :article/name]]})
+                    (let [opens (d/query datomic
+                                         '{:find [[(pull ?a [:*]) ...]]
+                                           :where [[?a :article/thread ?th]
+                                                   [?th :thread/open? true]]})
+                          createds (d/query datomic
+                                            '{:find [[(pull ?a [:*]) ...]]
+                                              :in [$ ?u-name]
+                                              :where [[?a :article/thread ?th]
+                                                      [?th :thread/posted-by ?u]
+                                                      [?u :user/name ?u-name]]}
+                                            user-name)]
+                      (concat opens createds)))))))
+
+(defn read-article? [datomic permissions article-id user-name]
+  (and (:list-articles permissions)
+       (or (:list-any-threads permissions)
+           (and (:list-thread permissions)
+                (or (d/query datomic
+                             '{:find [?a .]
+                               :in [$ ?a]
+                               :where [[?a :article/thread ?th]
+                                       [?th :thread/open? true]]}
+                             article-id)
+                    (d/query datomic
+                             '{:find [?a .]
+                               :in [$ ?a ?u-name]
+                               :where [[?a :article/thread ?th]
+                                       [?th :thread/posted-by ?u]
+                                       [?u :user/name ?u-name]]}
+                             article-id user-name))))))
 
 (defn article-resource [{:keys [datomic]} article-id]
   (liberator/resource
@@ -494,10 +575,12 @@
    :allowed-methods [:get :put]
    :malformed? #(parse-request %)
    :allowed? (fn [{{:keys [request-method identity]} :request}]
-               (let [permissions (:permissions identity)]
+               (let [permissions (:permissions identity)
+                     user-name (:user/name identity)]
                  (condp = request-method
-                   :get (or (:list-any-threads permissions) (:list-threads permissions))
-                   :put (or (:modify-any-articles permissions) (:modify-articles permissions))
+                   :get (read-article? datomic permissions article-id user-name)
+                   :put (and (:modify-articles permissions)
+                             (read-article? datomic permissions article-id user-name))
                    false)))
 
    :put! (fn [{article :edn req :request}]

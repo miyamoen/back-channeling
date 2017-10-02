@@ -15,8 +15,10 @@
            (fields
             [title :string]
             [comments :ref :many]
+            [posted-by :ref]
             [since :instant]
             [last-updated :instant]
+            [open? :boolean]
             [watchers :ref :many]
             [tags :ref :many]))
    (schema comment

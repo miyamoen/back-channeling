@@ -85,7 +85,7 @@
                (let [permissions (:permissions identity)]
                  (condp = request-method
                    :get (:list-tags permissions)
-                   :put (or (:modify-any-tags permissions) (:modify-tags permissions))
+                   :put (:modify-tags permissions)
                    false)))
 
    :exists? (fn [ctx]
@@ -111,7 +111,7 @@
    :allowed? (fn [{{:keys [request-method identity]} :request}]
                (let [permissions (:permissions identity)]
                  (condp = request-method
-                   :post (or (:modify-any-threads permissions) (:modify-threads permissions))
+                   :post (:attatch-thread-tags permissions)
                    false)))
 
    :exists? (fn [ctx]
@@ -135,7 +135,7 @@
    :allowed? (fn [{{:keys [request-method identity]} :request}]
                (let [permissions (:permissions identity)]
                  (condp = request-method
-                   :delete (or (:modify-any-threads permissions) (:modify-threads permissions))
+                   :delete (:detatch-thread-tags permissions)
                    false)))
 
    :exists? (fn [_]
