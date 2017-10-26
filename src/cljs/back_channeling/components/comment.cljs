@@ -25,12 +25,13 @@
                             comment-attrs
                             (when selected? {:class "selected"}))
         (om/build avatar (get-in comment [:comment/posted-by]))
-        [:div.content
+        [:div.content (when-not (:comment/public? comment) {:class "deleted"})
          [:a.number (:comment/no comment)] ": "
          [:a.author (get-in comment [:comment/posted-by :user/name])]
          [:div.metadata
           [:span.date (.format date-format-m (get-in comment [:comment/posted-at]))]]
-         [:div.text (case (get-in comment [:comment/format :db/ident])
+         [:div.text
+         (case (get-in comment [:comment/format :db/ident])
                       :comment.format/markdown
                       {:key (str "markdown-" (random-string 16))
                        :dangerouslySetInnerHTML {:__html (.render js/md (:comment/content comment))}}
